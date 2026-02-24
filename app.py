@@ -14,9 +14,14 @@ if st.button("Search & Download Excel"):
     if location and category:
         geo_url = f"https://maps.googleapis.com/maps/api/geocode/json?address={location}&key={api_key}"
         geo_response = requests.get(geo_url).json()
-        lat = geo_response['results'][0]['geometry']['location']['lat']
-        lng = geo_response['results'][0]['geometry']['location']['lng']
 
+if geo_response.get('status') != "OK" or not geo_response.get('results'):
+    st.error("❌ Location not found. Please check spelling or try a different location.")
+    st.stop()
+
+coords = geo_response['results'][0]['geometry']['location']
+lat = coords['lat']
+lng = coords['lng']
         places_url = f"https://maps.googleapis.com/maps/api/place/nearbysearch/json?location={lat},{lng}&radius=5000&keyword={category}&key={api_key}"
         places_response = requests.get(places_url).json()
 
