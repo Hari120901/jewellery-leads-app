@@ -8,7 +8,7 @@ st.set_page_config(page_title="Jewellery Leads Generator", layout="wide")
 st.title("💎 Jewellery Leads Generator")
 
 # Inputs
-location = st.text_input("Enter Location (e.g., Kondapur, Hyderabad, Telangana, India)")
+location = st.text_input("Enter Location (e.g., Kondapur, Hyderabad, Telangana)")
 category = st.text_input("Enter Category (e.g., jewellery store)")
 
 # Get API key from Streamlit secrets
@@ -19,40 +19,25 @@ if st.button("Search & Download Excel"):
         st.warning("Please enter both Location and Category.")
         st.stop()
 
-    # Encode location for URL
-    encoded_location = urllib.parse.quote(location.strip())
-    geo_url = f"https://maps.googleapis.com/maps/api/geocode/json?address={encoded_location}&key={api_key}"
-    geo_response = requests.get(geo_url).json()
+    # Combine category + location for text search
+    query = f"{category} {location}"
+    encoded_query = urllib.parse.quote(query)
+    places_url = f"https://maps.googleapis.com/maps/api/place/textsearch/json?query={encoded_query}&key={api_key}"
 
-    # Check if Google returned results
-    if geo_response.get("status") != "OK" or not geo_response.get("results"):
-        st.error("❌ Location not found. Please check spelling or try a different location.")
-        st.stop()
+    response = requests.get(places_url).json()
 
-    # Get latitude & longitude
-    coords = geo_response["results"][0]["geometry"]["location"]
-    lat = coords["lat"]
-    lng = coords["lng"]
-
-    st.info(f"Fetching stores near **{location}** in category **{category}**...")
-
-    # Google Places Nearby Search
-    places_url = f"https://maps.googleapis.com/maps/api/place/nearbysearch/json?location={lat},{lng}&radius=5000&keyword={urllib.parse.quote(category)}&key={api_key}"
-    places_response = requests.get(places_url).json()
-
-    if not places_response.get("results"):
-        st.warning("No places found for this category in this location.")
+    if response.get("status") != "OK" or not response.get("results"):
+        st.error("❌ No results found. Please check the input or try a different location.")
         st.stop()
 
     data = []
 
-    # Loop through places
-    for place in places_response.get("results", []):
+    for place in response.get("results", []):
         name = place.get("name")
-        address = place.get("vicinity")
+        address = place.get("formatted_address")
         place_id = place.get("place_id")
 
-        # Get details (phone, website, rating)
+        # Get details for phone, website, rating
         details_url = f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place_id}&fields=formatted_phone_number,website,rating&key={api_key}"
         details = requests.get(details_url).json().get("result", {})
 
