@@ -3,111 +3,132 @@ import requests
 import pandas as pd
 from io import BytesIO
 import urllib.parse
-import time
+from bs4 import BeautifulSoup
+from datetime import datetime, timedelta
+import asyncio
+from playwright.async_api import async_playwright
 
-st.set_page_config(page_title="Business Leads Generator India", layout="wide")
-st.title("🇮🇳 Universal Business Leads Generator")
+st.set_page_config(page_title="Free Ad Intelligence System", layout="wide")
+st.title("🚀 Free Automated Advertising Intelligence System")
 
-st.markdown("Generate business leads for **any category** in **any area of India**.")
+location = st.text_input("📍 Location")
+category = st.text_input("🏢 Category")
+max_results = st.selectbox("Max Results", [10, 20, 30])
 
-# User Inputs
-location = st.text_input("📍 Enter Location (e.g., Andheri West, Mumbai, Maharashtra)")
-category = st.text_input("🏢 Enter Business Category (e.g., jewellery store, automobile dealer, real estate agency, FMCG distributor)")
+GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
 
-max_results = st.selectbox("🔢 Maximum Results", [20, 40, 60])
+# =============================
+# GOOGLE BUSINESS SEARCH
+# =============================
 
-# Get API Key from Streamlit Secrets
-api_key = st.secrets["GOOGLE_API_KEY"]
+def get_places(query):
+    encoded_query = urllib.parse.quote(query)
+    url = f"https://maps.googleapis.com/maps/api/place/textsearch/json?query={encoded_query}&key={GOOGLE_API_KEY}"
+    response = requests.get(url).json()
+    return response.get("results", [])[:max_results]
 
-def get_places(query, api_key, max_results):
-    all_results = []
-    next_page_token = None
+# =============================
+# PIXEL DETECTION
+# =============================
 
-    while len(all_results) < max_results:
-        if next_page_token:
-            url = f"https://maps.googleapis.com/maps/api/place/textsearch/json?pagetoken={next_page_token}&key={api_key}"
-            time.sleep(2)  # Required delay for next_page_token
-        else:
-            encoded_query = urllib.parse.quote(query)
-            url = f"https://maps.googleapis.com/maps/api/place/textsearch/json?query={encoded_query}&key={api_key}"
+def check_pixels(website):
+    if not website:
+        return "No", "No"
+    try:
+        html = requests.get(website, timeout=5).text
+        fb_pixel = "Yes" if "facebook.com/tr" in html else "No"
+        google_pixel = "Yes" if "googletagmanager" in html or "gtag(" in html else "No"
+        return fb_pixel, google_pixel
+    except:
+        return "Unknown", "Unknown"
 
-        response = requests.get(url).json()
+# =============================
+# GOOGLE ADS DETECTION
+# =============================
 
-        if response.get("status") != "OK":
-            break
+def check_google_ads(name, location):
+    query = f"{name} {location}"
+    url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    response = requests.get(url, headers=headers)
+    if "Sponsored" in response.text:
+        return "Yes"
+    return "No"
 
-        all_results.extend(response.get("results", []))
-        next_page_token = response.get("next_page_token")
+# =============================
+# META ADS SCRAPER
+# =============================
 
-        if not next_page_token:
-            break
+async def check_meta_ads(name):
+    url = f"https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=IN&q={urllib.parse.quote(name)}"
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+        await page.goto(url)
+        content = await page.content()
+        await browser.close()
 
-    return all_results[:max_results]
+        if "Ad Library" in content:
+            if "Active" in content:
+                return "Yes"
+        return "No"
 
-if st.button("🔍 Search & Download Excel"):
-    if not location or not category:
-        st.warning("Please enter both Location and Category.")
-        st.stop()
+# =============================
+# MAIN PROCESS
+# =============================
+
+if st.button("Generate Leads"):
 
     query = f"{category} in {location}, India"
+    businesses = get_places(query)
 
-    with st.spinner("Fetching data from Google Maps..."):
-        places = get_places(query, api_key, max_results)
+    results = []
 
-    if not places:
-        st.error("❌ No results found. Try different keywords.")
-        st.stop()
+    for biz in businesses:
+        name = biz.get("name")
+        address = biz.get("formatted_address")
+        website = biz.get("website", None)
 
-    data = []
+        fb_pixel, google_pixel = check_pixels(website)
+        google_ads = check_google_ads(name, location)
 
-    for place in places:
-        name = place.get("name")
-        address = place.get("formatted_address")
-        place_id = place.get("place_id")
+        meta_ads = asyncio.run(check_meta_ads(name))
 
-        # Fetch detailed info
-        details_url = f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place_id}&fields=formatted_phone_number,website,rating,user_ratings_total&key={api_key}"
-        details = requests.get(details_url).json().get("result", {})
+        activity_score = 0
+        if fb_pixel == "Yes": activity_score += 1
+        if google_pixel == "Yes": activity_score += 1
+        if google_ads == "Yes": activity_score += 1
+        if meta_ads == "Yes": activity_score += 1
 
-        phone = details.get("formatted_phone_number", "N/A")
-        website = details.get("website", "N/A")
-        rating = details.get("rating", "N/A")
-        total_reviews = details.get("user_ratings_total", "N/A")
-
-        data.append([
+        results.append([
             name,
-            category,
-            location,
             address,
-            rating,
-            total_reviews,
-            phone,
-            website
+            google_ads,
+            meta_ads,
+            fb_pixel,
+            google_pixel,
+            activity_score
         ])
 
-    df = pd.DataFrame(
-        data,
-        columns=[
-            "Business Name",
-            "Category",
-            "Location",
-            "Address",
-            "Rating",
-            "Total Reviews",
-            "Phone",
-            "Website"
-        ]
-    )
+    df = pd.DataFrame(results, columns=[
+        "Business Name",
+        "Address",
+        "Google Ads Active",
+        "Meta Ads Active",
+        "Facebook Pixel",
+        "Google Pixel",
+        "Ad Activity Score (0-4)"
+    ])
+
+    st.success("Completed Analysis")
+    st.dataframe(df)
 
     output = BytesIO()
-    df.to_excel(output, index=False, engine="openpyxl")
+    df.to_excel(output, index=False)
     output.seek(0)
 
-    st.success(f"✅ Found {len(df)} businesses!")
-
     st.download_button(
-        label="📥 Download Excel",
+        "Download Excel",
         data=output,
-        file_name=f"{category}_{location}_leads.xlsx".replace(" ", "_"),
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        file_name="free_ad_intelligence.xlsx"
     )
