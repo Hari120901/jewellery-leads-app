@@ -3,11 +3,10 @@ import requests
 import pandas as pd
 from io import BytesIO
 import urllib.parse
-from bs4 import BeautifulSoup
-from datetime import datetime
+import re
 
-st.set_page_config(page_title="Free Ad Intelligence System", layout="wide")
-st.title("🚀 Free Automated Advertising Intelligence System")
+st.set_page_config(page_title="Business Lead Generator", layout="wide")
+st.title("📈 Business Lead Generator with Email Extraction")
 
 # =============================
 # USER INPUT
@@ -22,7 +21,7 @@ GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
 headers = {"User-Agent": "Mozilla/5.0"}
 
 # =============================
-# GOOGLE BUSINESS SEARCH
+# GOOGLE PLACES SEARCH
 # =============================
 
 def get_places(query):
@@ -32,45 +31,40 @@ def get_places(query):
     return response.get("results", [])[:max_results]
 
 # =============================
-# GET WEBSITE FROM PLACE DETAILS
+# GET PLACE DETAILS
 # =============================
 
-def get_website(place_id):
-    details_url = f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place_id}&fields=website&key={GOOGLE_API_KEY}"
+def get_details(place_id):
+    details_url = f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place_id}&fields=formatted_phone_number,website&key={GOOGLE_API_KEY}"
     details = requests.get(details_url).json().get("result", {})
-    return details.get("website")
+
+    phone = details.get("formatted_phone_number", "N/A")
+    website = details.get("website", None)
+
+    return phone, website
 
 # =============================
-# PIXEL DETECTION
+# EMAIL EXTRACTION
 # =============================
 
-def check_pixels(website):
+def extract_email(website):
     if not website:
-        return "No", "No"
+        return "N/A"
+
     try:
-        html = requests.get(website, headers=headers, timeout=5).text
-        fb_pixel = "Yes" if "facebook.com/tr" in html else "No"
-        google_pixel = "Yes" if "googletagmanager" in html or "gtag(" in html else "No"
-        return fb_pixel, google_pixel
+        response = requests.get(website, headers=headers, timeout=5)
+        html = response.text
+
+        # Regex for email
+        emails = re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", html)
+
+        if emails:
+            return emails[0]
+        else:
+            return "Not Found"
+
     except:
-        return "Unknown", "Unknown"
-
-# =============================
-# GOOGLE ADS DETECTION
-# =============================
-
-def check_google_ads(name, location):
-    try:
-        query = f"{name} {location}"
-        url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
-        response = requests.get(url, headers=headers, timeout=5).text
-
-        # crude but works
-        if "Sponsored" in response or "Ad ·" in response:
-            return "Yes"
-        return "No"
-    except:
-        return "Unknown"
+        return "Error"
 
 # =============================
 # MAIN PROCESS
@@ -95,48 +89,26 @@ if st.button("Generate Leads"):
         address = biz.get("formatted_address")
         place_id = biz.get("place_id")
 
-        website = get_website(place_id)
-        fb_pixel, google_pixel = check_pixels(website)
-        google_ads = check_google_ads(name, location)
-
-        # Activity Score
-        score = 0
-        if fb_pixel == "Yes": score += 1
-        if google_pixel == "Yes": score += 1
-        if google_ads == "Yes": score += 1
-
-        if score == 0:
-            status = "Not Advertising"
-        elif score == 1:
-            status = "Low Activity"
-        elif score == 2:
-            status = "Medium Activity"
-        else:
-            status = "High Activity"
+        phone, website = get_details(place_id)
+        email = extract_email(website)
 
         results.append([
             name,
             address,
+            phone,
             website if website else "N/A",
-            google_ads,
-            fb_pixel,
-            google_pixel,
-            score,
-            status
+            email
         ])
 
     df = pd.DataFrame(results, columns=[
         "Business Name",
         "Address",
+        "Phone",
         "Website",
-        "Google Ads Detected",
-        "Facebook Pixel Installed",
-        "Google Tag Installed",
-        "Ad Activity Score (0-3)",
-        "Ad Activity Level"
+        "Email"
     ])
 
-    st.success("Analysis Complete")
+    st.success("Lead Generation Complete")
     st.dataframe(df)
 
     output = BytesIO()
@@ -146,6 +118,6 @@ if st.button("Generate Leads"):
     st.download_button(
         "Download Excel",
         data=output,
-        file_name="free_ad_intelligence.xlsx",
+        file_name="business_leads_with_email.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
